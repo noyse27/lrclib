@@ -21,6 +21,13 @@ LRCLIB_LOG=info cargo run --release -- serve --database db.sqlite3
 
 Server will be available at http://0.0.0.0:3300
 
+### Windows notification-area launcher
+
+Windows users who run the server directly with Cargo can use the optional
+[tray starter](contrib/windows-tray/README.md). It starts LRCLIB without a
+persistent console window and provides start, stop, restart, status, and log
+actions from the notification area.
+
 ## Database configuration
 
 You have two environment variables available to tweak the database connection:
