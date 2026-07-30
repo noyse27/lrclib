@@ -304,8 +304,16 @@ async fn shutdown_signal() {
             .await;
     };
 
-    tokio::select! {
-        _ = ctrl_c => {},
-        _ = terminate => {},
+    #[cfg(unix)]
+    {
+        tokio::select! {
+            _ = ctrl_c => {},
+            _ = terminate => {},
+        }
+    }
+
+    #[cfg(not(unix))]
+    {
+        ctrl_c.await;
     }
 }

@@ -32,7 +32,8 @@ Server startup in `server::serve_with_queue`:
 - build shared `AppState`
 - spawn background tasks
 - build Axum router
-- serve on `0.0.0.0:<port>` with graceful shutdown
+- serve on `0.0.0.0:<port>` with graceful shutdown on Ctrl+C on all platforms and
+  SIGTERM on Unix
 
 Background tasks:
 
