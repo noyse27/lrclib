@@ -21,6 +21,9 @@ Most real behavior lives in `server/`.
 - `server/src/entities/*.rs`: small DB/domain structs.
 - `server/src/utils.rs`: input normalization, publish-token verification, cache helpers.
 - `server/migrations/*`: embedded SQLite schema/migrations, applied on startup.
+- `contrib/windows-tray/`: optional Windows notification-area launcher. On first
+  start it asks for the server directory and SQLite file, then persists those
+  paths in `%LOCALAPPDATA%\LRCLIB\windows-tray\config.json`.
 
 ## Runtime Flow
 

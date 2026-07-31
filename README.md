@@ -24,9 +24,25 @@ Server will be available at http://0.0.0.0:3300
 ### Windows notification-area launcher
 
 Windows users who run the server directly with Cargo can use the optional
-[tray starter](contrib/windows-tray/README.md). It starts LRCLIB without a
+[tray application](contrib/windows-tray/README.md). It starts LRCLIB without a
 persistent console window and provides start, stop, restart, status, and log
-actions from the notification area.
+actions from the Windows notification area.
+
+To use it:
+
+1. Install Rust/Cargo and clone this repository.
+2. Double-click
+   [`contrib/windows-tray/Start-LRCLIB-Tray.vbs`](contrib/windows-tray/Start-LRCLIB-Tray.vbs).
+3. On the first start, select the LRCLIB server directory containing
+   `Cargo.toml`.
+4. Select an existing SQLite database file or choose a path for a new one.
+
+The tray application stores these paths for the current Windows user in
+`%LOCALAPPDATA%\LRCLIB\windows-tray\config.json` and reuses them on subsequent
+starts. They can be changed later with **Configure paths...** in the tray menu.
+
+See the [Windows tray documentation](contrib/windows-tray/README.md) for login
+auto-start, logging, and all available settings.
 
 ## Database configuration
 

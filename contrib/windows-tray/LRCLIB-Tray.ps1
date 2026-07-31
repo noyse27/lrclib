@@ -1,6 +1,6 @@
 param(
-    [string]$ServerDirectory = "E:\lrclib",
-    [string]$DatabaseFile = "db.sqlite3",
+    [string]$ServerDirectory,
+    [string]$DatabaseFile,
     [string]$LogLevel = "info",
     [bool]$AutoStart = $true
 )
@@ -10,11 +10,19 @@ $ErrorActionPreference = "Stop"
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
 
+$script:ServerDirectoryWasSpecified =
+    $PSBoundParameters.ContainsKey("ServerDirectory")
+$script:DatabaseFileWasSpecified =
+    $PSBoundParameters.ContainsKey("DatabaseFile")
 $script:ServerProcess = $null
 $script:StoppingServer = $false
 $script:LastKnownRunning = $false
-$script:LogDirectory = Join-Path $ServerDirectory "logs"
-$script:PidFile = Join-Path $ServerDirectory ".lrclib-tray-process.json"
+$script:ConfigDirectory = Join-Path `
+    ([Environment]::GetFolderPath("LocalApplicationData")) `
+    "LRCLIB\windows-tray"
+$script:ConfigFile = Join-Path $script:ConfigDirectory "config.json"
+$script:LogDirectory = $null
+$script:PidFile = $null
 
 function Show-Error {
     param([string]$Message)
@@ -39,6 +47,167 @@ function Show-Notification {
     $script:NotifyIcon.BalloonTipText = $Text
     $script:NotifyIcon.BalloonTipIcon = $Icon
     $script:NotifyIcon.ShowBalloonTip(3000)
+}
+
+function Read-TrayConfiguration {
+    if (-not (Test-Path -LiteralPath $script:ConfigFile -PathType Leaf)) {
+        return $null
+    }
+
+    try {
+        return Get-Content -LiteralPath $script:ConfigFile -Raw |
+            ConvertFrom-Json
+    }
+    catch {
+        Show-Error `
+            "The saved tray configuration could not be read and will be recreated:`n$($script:ConfigFile)`n`n$($_.Exception.Message)"
+        return $null
+    }
+}
+
+function Save-TrayConfiguration {
+    $configuration = @{
+        server_directory = $ServerDirectory
+        database_file = $DatabaseFile
+    } | ConvertTo-Json
+
+    New-Item -ItemType Directory -Path $script:ConfigDirectory -Force |
+        Out-Null
+    Set-Content `
+        -LiteralPath $script:ConfigFile `
+        -Value $configuration `
+        -Encoding UTF8
+}
+
+function Update-ConfiguredPaths {
+    $script:LogDirectory = Join-Path $ServerDirectory "logs"
+    $script:PidFile = Join-Path `
+        $script:ConfigDirectory `
+        "server-process.json"
+}
+
+function Request-TrayConfiguration {
+    param([switch]$IsFirstStart)
+
+    $folderDialog = New-Object System.Windows.Forms.FolderBrowserDialog
+    $folderDialog.Description =
+        "Select the LRCLIB server directory (the folder containing Cargo.toml)."
+    $folderDialog.ShowNewFolderButton = $false
+
+    if (Test-Path -LiteralPath $ServerDirectory -PathType Container) {
+        $folderDialog.SelectedPath = $ServerDirectory
+    }
+
+    try {
+        $folderResult = $folderDialog.ShowDialog()
+        if ($folderResult -ne [System.Windows.Forms.DialogResult]::OK) {
+            return $false
+        }
+
+        $selectedServerDirectory = [IO.Path]::GetFullPath(
+            $folderDialog.SelectedPath
+        )
+    }
+    finally {
+        $folderDialog.Dispose()
+    }
+
+    if (-not (Test-Path `
+        -LiteralPath (Join-Path $selectedServerDirectory "Cargo.toml") `
+        -PathType Leaf)) {
+        Show-Error `
+            "The selected directory does not contain a Cargo.toml file:`n$selectedServerDirectory"
+        return $false
+    }
+
+    $databaseDialog = New-Object System.Windows.Forms.SaveFileDialog
+    $databaseDialog.Title = "Select or create the LRCLIB database file"
+    $databaseDialog.Filter =
+        "SQLite database (*.sqlite3;*.sqlite;*.db)|*.sqlite3;*.sqlite;*.db|All files (*.*)|*.*"
+    $databaseDialog.DefaultExt = "sqlite3"
+    $databaseDialog.AddExtension = $true
+    $databaseDialog.CheckFileExists = $false
+    $databaseDialog.OverwritePrompt = $false
+    $databaseDialog.InitialDirectory = $selectedServerDirectory
+    $databaseDialog.FileName = "db.sqlite3"
+
+    if (-not [string]::IsNullOrWhiteSpace($DatabaseFile)) {
+        try {
+            $databaseDialog.InitialDirectory =
+                [IO.Path]::GetDirectoryName(
+                    [IO.Path]::GetFullPath($DatabaseFile)
+                )
+            $databaseDialog.FileName = [IO.Path]::GetFileName($DatabaseFile)
+        }
+        catch {
+            # Keep the defaults when a supplied path cannot be normalized.
+        }
+    }
+
+    try {
+        $databaseResult = $databaseDialog.ShowDialog()
+        if ($databaseResult -ne [System.Windows.Forms.DialogResult]::OK) {
+            return $false
+        }
+
+        $selectedDatabaseFile = [IO.Path]::GetFullPath(
+            $databaseDialog.FileName
+        )
+    }
+    finally {
+        $databaseDialog.Dispose()
+    }
+
+    $script:ServerDirectory = $selectedServerDirectory
+    $script:DatabaseFile = $selectedDatabaseFile
+    Update-ConfiguredPaths
+
+    try {
+        Save-TrayConfiguration
+    }
+    catch {
+        Show-Error `
+            "The tray configuration could not be saved:`n$($script:ConfigFile)`n`n$($_.Exception.Message)"
+        return $false
+    }
+
+    if (-not $IsFirstStart) {
+        Show-Notification `
+            "LRCLIB Server" `
+            "The server and database paths were saved."
+    }
+
+    return $true
+}
+
+function Initialize-TrayConfiguration {
+    $configuration = Read-TrayConfiguration
+
+    if (-not $script:ServerDirectoryWasSpecified -and
+        $null -ne $configuration -and
+        -not [string]::IsNullOrWhiteSpace(
+            [string]$configuration.server_directory
+        )) {
+        $script:ServerDirectory = [string]$configuration.server_directory
+    }
+
+    if (-not $script:DatabaseFileWasSpecified -and
+        $null -ne $configuration -and
+        -not [string]::IsNullOrWhiteSpace(
+            [string]$configuration.database_file
+        )) {
+        $script:DatabaseFile = [string]$configuration.database_file
+    }
+
+    if ([string]::IsNullOrWhiteSpace($ServerDirectory) -or
+        [string]::IsNullOrWhiteSpace($DatabaseFile)) {
+        return Request-TrayConfiguration -IsFirstStart
+    }
+
+    $script:ServerDirectory = [IO.Path]::GetFullPath($ServerDirectory)
+    $script:DatabaseFile = [IO.Path]::GetFullPath($DatabaseFile)
+    Update-ConfiguredPaths
+    return $true
 }
 
 function Find-Cargo {
@@ -162,7 +331,7 @@ function Start-LrclibServer {
                     "--",
                     "serve",
                     "--database",
-                    $DatabaseFile
+                    "`"$DatabaseFile`""
                 ) `
                 -WorkingDirectory $ServerDirectory `
                 -WindowStyle Hidden `
@@ -241,6 +410,25 @@ function Restart-LrclibServer {
     Start-LrclibServer
 }
 
+function Edit-TrayConfiguration {
+    if (Test-ServerRunning) {
+        $answer = [System.Windows.Forms.MessageBox]::Show(
+            "The server must be stopped before changing its paths. Stop it now?",
+            "LRCLIB Server",
+            [System.Windows.Forms.MessageBoxButtons]::YesNo,
+            [System.Windows.Forms.MessageBoxIcon]::Question
+        )
+
+        if ($answer -ne [System.Windows.Forms.DialogResult]::Yes) {
+            return
+        }
+
+        Stop-LrclibServer -Silent
+    }
+
+    Request-TrayConfiguration | Out-Null
+}
+
 function Open-Directory {
     param([string]$Path)
 
@@ -264,6 +452,12 @@ if (-not $createdNew) {
         [System.Windows.Forms.MessageBoxButtons]::OK,
         [System.Windows.Forms.MessageBoxIcon]::Information
     ) | Out-Null
+    $mutex.Dispose()
+    exit 0
+}
+
+if (-not (Initialize-TrayConfiguration)) {
+    $mutex.ReleaseMutex()
     $mutex.Dispose()
     exit 0
 }
@@ -309,6 +503,11 @@ $openLogsItem = New-Object System.Windows.Forms.ToolStripMenuItem
 $openLogsItem.Text = "Open logs"
 $openLogsItem.add_Click({ Open-Directory $script:LogDirectory })
 $menu.Items.Add($openLogsItem) | Out-Null
+
+$configureItem = New-Object System.Windows.Forms.ToolStripMenuItem
+$configureItem.Text = "Configure paths..."
+$configureItem.add_Click({ Edit-TrayConfiguration })
+$menu.Items.Add($configureItem) | Out-Null
 
 $menu.Items.Add((New-Object System.Windows.Forms.ToolStripSeparator)) |
     Out-Null
